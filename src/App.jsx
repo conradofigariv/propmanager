@@ -812,7 +812,6 @@ function Ingresos({ data, setData, month, year }) {
             <thead><tr><th>Propiedad</th><th>Fecha</th><th>Monto</th><th>Notas</th><th></th></tr></thead>
             <tbody>
               {payments.map(r => {
-                const prop = data.properties.find(p => p.id === r.propertyId);
                 return (
                   <tr key={r.id}>
                     <td>
@@ -1551,17 +1550,24 @@ function NotificationBell({ data }) {
     const results = {};
     await Promise.all(updateAlerts.map(async (a) => {
       try {
-        const months = parseInt(a.freqMonths);
         const rate = a.ajuste === "IPC" ? "ipc" : "icl";
+        // adjustmentDate = the next scheduled update date (projected)
+        const adjustmentDate = a.nextUpdate
+          ? a.nextUpdate.toISOString().split("T")[0]
+          : new Date().toISOString().split("T")[0];
         const res = await fetch("/api/calculate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ amount: parseFloat(a.currentAmount), date: a.refDate, months, rate }),
+          body: JSON.stringify({
+            amount: parseFloat(a.currentAmount),
+            startDate: a.refDate,
+            adjustmentDate,
+            rate,
+          }),
         });
         const json = await res.json();
-        if (json.success && json.data?.length) {
-          const last = json.data[json.data.length - 1];
-          results[a.id] = { newAmount: Math.round(last.amount), pct: Number(last.dif?.toFixed(1)) };
+        if (json.success) {
+          results[a.id] = { newAmount: json.newRent, pct: json.pct };
         }
       } catch {}
     }));
@@ -1724,7 +1730,8 @@ export default function App() {
     (p.subProperties||[]).some(sp => {
       const c = sp.contract;
       if (!c || !c.startDate || !c.updateFrequency) return false;
-      const next = getNextUpdateDate(c.startDate, c.updateFrequency);
+      const refDate = c.lastUpdateDate || c.startDate;
+      const next = getNextUpdateDate(refDate, c.updateFrequency);
       const days = getDaysUntil(next);
       return days !== null && days <= 30;
     })
