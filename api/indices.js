@@ -29,8 +29,15 @@ export default async function handler(req) {
   try {
     const [r3, r6] = await Promise.all([callArquiler("ipc", 3, key), callArquiler("ipc", 6, key)]);
     ipc = { m3: r3.pct, m6: r6.pct, lastMonth: fmtMes(r3.lastDate) };
-  } catch(e) {}
+  } catch(e) { console.error("IPC:", e.message); }
 
   try {
     const [r3, r6] = await Promise.all([callArquiler("icl", 3, key), callArquiler("icl", 6, key)]);
-    icl = { m3: r3.pct, m6: r6.pct, lastMo
+    icl = { m3: r3.pct, m6: r6.pct, lastMonth: fmtMes(r3.lastDate) };
+  } catch(e) { console.error("ICL:", e.message); }
+
+  return new Response(JSON.stringify({ ipc, icl }), {
+    status: 200,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "s-maxage=3600" },
+  });
+}
