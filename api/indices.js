@@ -33,11 +33,4 @@ export default async function handler(req) {
 
   try {
     const [r3, r6] = await Promise.all([callArquiler("icl", 3, key), callArquiler("icl", 6, key)]);
-    icl = { m3: r3.pct, m6: r6.pct, lastMonth: fmtMes(r3.lastDate) };
-  } catch(e) {}
-
-  return new Response(JSON.stringify({ ipc, icl }), {
-    status: 200,
-    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "s-maxage=3600" },
-  });
-}
+    icl = { m3: r3.pct, m6: r6.pct, lastMo
