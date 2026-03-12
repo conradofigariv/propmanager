@@ -1,4 +1,5 @@
 // api/indices.js — Node.js runtime
+export const config = { maxDuration: 30 }; // Vercel: allow up to 30s (Pro) or 10s (Hobby)
 import * as XLSX from "xlsx";
 
 const ICL_URL =
@@ -39,7 +40,7 @@ const subtractMonths = (dateStr, n) => {
 /* ── Data fetchers ────────────────────────────────────── */
 
 async function fetchICL() {
-  const res = await fetch(ICL_URL, { signal: AbortSignal.timeout(20000) });
+  const res = await fetch(ICL_URL, { signal: AbortSignal.timeout(12000) });
   if (!res.ok) throw new Error(`BCRA HTTP ${res.status}`);
 
   const buf = await res.arrayBuffer();
@@ -58,7 +59,7 @@ async function fetchICL() {
 }
 
 async function fetchIPC() {
-  const res = await fetch(IPC_API, { signal: AbortSignal.timeout(15000) });
+  const res = await fetch(IPC_API, { signal: AbortSignal.timeout(8000) });
   if (!res.ok) throw new Error(`INDEC HTTP ${res.status}`);
   const json = await res.json();
   if (!Array.isArray(json.data)) throw new Error("Formato INDEC inesperado");
