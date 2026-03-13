@@ -1608,27 +1608,16 @@ function NotificationBell({ data }) {
    CALCULADORA DE ALQUILER
 ════════════════════════════════════════════════════ */
 function Calculadora() {
-  const [iclData, setIclData]       = useState([]);
-  const [ipcData, setIpcData]       = useState(null);
+  const [indices, setIndices]       = useState(null);  // { icl, ipc } de /api/indices
   const [loadingIdx, setLoadingIdx] = useState(true);
   const [rent, setRent]             = useState("");
   const [startDate, setStartDate]   = useState("");
   const [freq, setFreq]             = useState(6);
   const [indice, setIndice]         = useState("ICL");
-  const [result, setResult]         = useState(null);
+  const [result, setResult]         = useState(null);  // array de períodos
+  const [loading, setLoading]       = useState(false);
   const [cerr, setCerr]             = useState("");
 
-  function toISO(s) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}`; }
-  function addMonths(iso, n) {
-    const d = new Date(iso + 'T12:00:00');
-    d.setMonth(d.getMonth() + n);
-    return d.toISOString().slice(0, 10);
-  }
-  function findClosest(data, target) {
-    let res = null;
-    for (const r of data) { if (r.date <= target) res = r; else break; }
-    return res;
-  }
   function mesNombre(iso) {
     const [y, m] = iso.split('-');
     return new Date(y, m - 1).toLocaleString('es-AR', { month: 'long' });
@@ -1641,23 +1630,14 @@ function Calculadora() {
     return `Per. ${n}`;
   }
 
+  // Carga los índices actuales para las tarjetas de arriba
   useEffect(() => {
     async function fetchIndices() {
       setLoadingIdx(true);
       try {
-        const today = new Date().toISOString().slice(0, 10);
-        const d3y = new Date(); d3y.setFullYear(d3y.getFullYear() - 3);
-        const desde = d3y.toISOString().slice(0, 10);
-        const [iclRes, ipcRes] = await Promise.all([
-          fetch(`/api/icl?desde=${desde}&hasta=${today}`),
-          fetch('/api/ipc'),
-        ]);
-        const iclJson = await iclRes.json();
-        const ipcJson = await ipcRes.json();
-        setIclData((iclJson.data || [])
-          .map(r => ({ date: toISO(r.fecha), value: parseFloat(r.valor) }))
-          .sort((a, b) => a.date.localeCompare(b.date)));
-        setIpcData(ipcJson.data);
+        const res = await fetch('/api/indices');
+        const json = await res.json();
+        setIndices(json);
       } catch {}
       setLoadingIdx(false);
     }
@@ -1666,40 +1646,29 @@ function Calculadora() {
     setStartDate(ago.toISOString().slice(0, 10));
   }, []);
 
-  function calcular() {
+  async function calcular() {
     setCerr(''); setResult(null);
     const r = parseFloat(rent);
     if (!r || isNaN(r) || r <= 0) { setCerr('Ingresá un monto válido.'); return; }
     if (!startDate) { setCerr('Ingresá la fecha de inicio.'); return; }
 
-    const today = new Date().toISOString().slice(0, 10);
-    const rows = [];
-
-    if (indice === 'ICL') {
-      if (!iclData.length) { setCerr('Datos ICL no cargados todavía.'); return; }
-      const iclStart = findClosest(iclData, startDate);
-      if (!iclStart) { setCerr(`Sin datos ICL para ${startDate}`); return; }
-      let n = 0, date = startDate;
-      while (date <= today) {
-        const icl = findClosest(iclData, date);
-        if (!icl) break;
-        const coef = icl.value / iclStart.value;
-        rows.push({ n, date, idxVal: icl.value, aumento: n === 0 ? 0 : (coef - 1) * 100, valor: r * coef });
-        n++; date = addMonths(startDate, n * freq);
-      }
-    } else {
-      if (!ipcData) { setCerr('Datos IPC no cargados todavía.'); return; }
-      const rate = ipcData.indice_ipc / 100;
-      let n = 0, date = startDate;
-      while (date <= today) {
-        const coef = Math.pow(1 + rate, n * freq);
-        rows.push({ n, date, idxVal: ipcData.indice_ipc, aumento: n === 0 ? 0 : (coef - 1) * 100, valor: r * coef });
-        n++; date = addMonths(startDate, n * freq);
-      }
+    setLoading(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const rate = indice === 'ICL' ? 'icl' : 'ipc';
+      const res = await fetch('/api/calculate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'multi', initialRent: r, startDate, freqMonths: freq, rate, today }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Error al calcular');
+      if (!json.periods?.length) throw new Error('No hay datos para ese rango de fechas');
+      setResult(json.periods);
+    } catch(e) {
+      setCerr(e.message);
     }
-
-    if (!rows.length) { setCerr('No hay datos para ese rango.'); return; }
-    setResult(rows);
+    setLoading(false);
   }
 
   const prev = result && result.length >= 2 ? result[result.length - 2] : result?.[0];
@@ -1712,28 +1681,24 @@ function Calculadora() {
 
       <div className="grid-2" style={{marginBottom:24}}>
         <div className="stat-card" style={{borderTop:"2px solid var(--gold)"}}>
-          <div className="stat-label">ICL hoy</div>
+          <div className="stat-label">ICL — variación 3 meses</div>
           {loadingIdx ? (
             <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
-          ) : iclData.length ? (
+          ) : indices?.icl ? (
             <>
-              <div className="stat-value gold" style={{fontFamily:"DM Mono,monospace"}}>
-                {iclData[iclData.length-1].value.toLocaleString("es-AR",{minimumFractionDigits:2})}
-              </div>
-              <div className="stat-sub">{iclData[iclData.length-1].date}</div>
+              <div className="stat-value gold">+{Number(indices.icl.m3).toFixed(1)}%</div>
+              <div className="stat-sub">6 meses: +{Number(indices.icl.m6).toFixed(1)}% · hasta {indices.icl.lastMonth}</div>
             </>
           ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
         </div>
         <div className="stat-card" style={{borderTop:"2px solid var(--blue)"}}>
-          <div className="stat-label">IPC último mes</div>
+          <div className="stat-label">IPC — variación 3 meses</div>
           {loadingIdx ? (
             <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
-          ) : ipcData ? (
+          ) : indices?.ipc ? (
             <>
-              <div className="stat-value blue" style={{fontFamily:"DM Mono,monospace"}}>
-                +{ipcData.indice_ipc.toFixed(1)}%
-              </div>
-              <div className="stat-sub">{ipcData.nombre_mes} {ipcData.anio} · Próximo: {ipcData.fecha_proximo_informe}</div>
+              <div className="stat-value blue">+{Number(indices.ipc.m3).toFixed(1)}%</div>
+              <div className="stat-sub">6 meses: +{Number(indices.ipc.m6).toFixed(1)}% · {indices.ipc.lastMonth}</div>
             </>
           ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
         </div>
@@ -1794,8 +1759,8 @@ function Calculadora() {
             </div>
           )}
 
-          <button className="btn btn-gold" style={{width:"100%",justifyContent:"center",padding:"12px",fontSize:14}} onClick={calcular}>
-            Calcular
+          <button className="btn btn-gold" style={{width:"100%",justifyContent:"center",padding:"12px",fontSize:14,opacity:loading?.7:1}} onClick={calcular} disabled={loading}>
+            {loading ? "⏳ Calculando..." : "Calcular"}
           </button>
         </div>
       ) : (
@@ -1836,9 +1801,9 @@ function Calculadora() {
                   <tr key={i}>
                     <td>{periodLabel(i+1)}</td>
                     <td>{r.date}</td>
-                    <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.idxVal.toLocaleString("es-AR",{minimumFractionDigits:2})}</td>
+                    <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.idxVal != null ? Number(r.idxVal).toLocaleString("es-AR",{minimumFractionDigits:2}) : "—"}</td>
                     <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color:"var(--green)"}}>
-                      {r.aumento===0?"—":`+${r.aumento.toFixed(2)}%`}
+                      {r.aumento===0?"—":`+${Number(r.aumento).toFixed(2)}%`}
                     </td>
                     <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color:"var(--gold2)"}}>{fmt(r.valor)}</td>
                   </tr>
