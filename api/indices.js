@@ -1,9 +1,13 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   try {
+    // Acepta ?months=N (default 3). Clamp entre 1 y 24.
+    const months = Math.min(24, Math.max(1, parseInt(req.query.months) || 3));
+
     const today = new Date().toISOString().slice(0, 10);
-    const d6 = new Date(); d6.setMonth(d6.getMonth() - 6);
-    const desde = d6.toISOString().slice(0, 10);
+    const dFrom = new Date();
+    dFrom.setMonth(dFrom.getMonth() - months);
+    const desde = dFrom.toISOString().slice(0, 10);
 
     const [iclRes, ipcRes] = await Promise.all([
       fetch(`https://api.argly.com.ar/api/icl/range?desde=${desde}&hasta=${today}`),
@@ -13,7 +17,6 @@ export default async function handler(req, res) {
     const iclJson = await iclRes.json();
     const ipcJson = await ipcRes.json();
 
-    // ICL — convertir DD/MM/YYYY a YYYY-MM-DD y ordenar
     function toISO(s) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}`; }
 
     const iclData = (iclJson.data || [])
@@ -22,24 +25,21 @@ export default async function handler(req, res) {
 
     const iclNow  = iclData[iclData.length - 1]?.value;
     const iclLast = iclData[iclData.length - 1]?.date;
+    const iclRef  = iclData[0]?.value; // primer valor del período pedido
 
-    // Buscar valor más cercano a 3 meses atrás
-    const d3str = new Date(new Date().setMonth(new Date().getMonth() - 3)).toISOString().slice(0, 10);
-    const icl3ref = iclData.find(r => r.date >= d3str)?.value ?? iclData[0]?.value;
-    const icl6ref = iclData[0]?.value;
+    const iclVar = (iclNow && iclRef) ? ((iclNow - iclRef) / iclRef * 100).toFixed(2) : null;
 
-    const iclM3 = icl3ref ? ((iclNow - icl3ref) / icl3ref * 100).toFixed(2) : null;
-    const iclM6 = icl6ref ? ((iclNow - icl6ref) / icl6ref * 100).toFixed(2) : null;
-
-    // IPC — solo tenemos la variación mensual actual, aproximamos con interés compuesto
-    const ipcRate    = ipcJson.data?.indice_ipc;
-    const ipcM3      = ipcRate != null ? ((Math.pow(1 + ipcRate / 100, 3) - 1) * 100).toFixed(2) : null;
-    const ipcM6      = ipcRate != null ? ((Math.pow(1 + ipcRate / 100, 6) - 1) * 100).toFixed(2) : null;
+    // IPC — variación compuesta para N meses
+    const ipcRate = ipcJson.data?.indice_ipc;
+    const ipcVar  = ipcRate != null
+      ? ((Math.pow(1 + ipcRate / 100, months) - 1) * 100).toFixed(2)
+      : null;
     const ipcLastMonth = ipcJson.data ? `${ipcJson.data.nombre_mes} ${ipcJson.data.anio}` : null;
 
     res.status(200).json({
-      icl: { m3: iclM3, m6: iclM6, lastMonth: iclLast },
-      ipc: { m3: ipcM3, m6: ipcM6, lastMonth: ipcLastMonth },
+      months,
+      icl: { variation: iclVar, lastMonth: iclLast },
+      ipc: { variation: ipcVar, lastMonth: ipcLastMonth },
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
