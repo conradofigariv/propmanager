@@ -1630,18 +1630,21 @@ function Calculadora() {
     return `Per. ${n}`;
   }
 
-  // Carga los índices actuales para las tarjetas de arriba
+  // Carga los índices para el período seleccionado — re-fetchea cuando cambia freq
   useEffect(() => {
     async function fetchIndices() {
       setLoadingIdx(true);
       try {
-        const res = await fetch('/api/indices');
+        const res = await fetch(`/api/indices?months=${freq}`);
         const json = await res.json();
         setIndices(json);
       } catch {}
       setLoadingIdx(false);
     }
     fetchIndices();
+  }, [freq]);
+
+  useEffect(() => {
     const ago = new Date(); ago.setFullYear(ago.getFullYear() - 1);
     setStartDate(ago.toISOString().slice(0, 10));
   }, []);
@@ -1681,24 +1684,24 @@ function Calculadora() {
 
       <div className="grid-2" style={{marginBottom:24}}>
         <div className="stat-card" style={{borderTop:"2px solid var(--gold)"}}>
-          <div className="stat-label">ICL — variación 3 meses</div>
+          <div className="stat-label">ICL — {freq} {freq===1?"mes":"meses"}</div>
           {loadingIdx ? (
             <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
-          ) : indices?.icl ? (
+          ) : indices?.icl?.variation != null ? (
             <>
-              <div className="stat-value gold">+{Number(indices.icl.m3).toFixed(1)}%</div>
-              <div className="stat-sub">6 meses: +{Number(indices.icl.m6).toFixed(1)}% · hasta {indices.icl.lastMonth}</div>
+              <div className="stat-value gold">+{Number(indices.icl.variation).toFixed(1)}%</div>
+              <div className="stat-sub">hasta {indices.icl.lastMonth}</div>
             </>
           ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
         </div>
         <div className="stat-card" style={{borderTop:"2px solid var(--blue)"}}>
-          <div className="stat-label">IPC — variación 3 meses</div>
+          <div className="stat-label">IPC — {freq} {freq===1?"mes":"meses"}</div>
           {loadingIdx ? (
             <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
-          ) : indices?.ipc ? (
+          ) : indices?.ipc?.variation != null ? (
             <>
-              <div className="stat-value blue">+{Number(indices.ipc.m3).toFixed(1)}%</div>
-              <div className="stat-sub">6 meses: +{Number(indices.ipc.m6).toFixed(1)}% · {indices.ipc.lastMonth}</div>
+              <div className="stat-value blue">+{Number(indices.ipc.variation).toFixed(1)}%</div>
+              <div className="stat-sub">{indices.ipc.lastMonth}</div>
             </>
           ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
         </div>
