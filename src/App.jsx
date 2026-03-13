@@ -1382,104 +1382,6 @@ function Destinos({ data, setData }) {
 
 
 /* ════════════════════════════════════════════════════
-   SIDEBAR — WIDGET IPC / ICL
-════════════════════════════════════════════════════ */
-function SidebarIndices() {
-  const [indices, setIndices] = useState(null); // { ipc: {m3, m6}, icl: {m3, m6} }
-  const [loading, setLoading]   = useState(true);
-  const [lastFetch, setLastFetch] = useState(null);
-  const [error, setError]       = useState(false);
-
-  const fetchAll = async () => {
-    setLoading(true); setError(false); setIndices(null);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 25000); // 25s client timeout
-      const res = await fetch("/api/indices", { signal: controller.signal });
-      clearTimeout(timer);
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const json = await res.json();
-      if (!json.ipc && !json.icl) throw new Error("Sin datos");
-      setIndices({
-        ipc: json.ipc || null,
-        icl: json.icl || null,
-      });
-      setLastFetch(new Date().toLocaleTimeString("es-AR", {hour:"2-digit",minute:"2-digit"}));
-    } catch(e) {
-      setError(true);
-    }
-    setLoading(false);
-  };
-
-  useEffect(() => { fetchAll(); }, []);
-
-  const isValid = (v) => v !== null && v !== undefined && !isNaN(Number(v));
-
-  const PctBox = ({ label, value }) => (
-    <div style={{flex:1,background:"var(--surface3)",borderRadius:6,padding:"6px 8px",textAlign:"center"}}>
-      <div style={{fontSize:9,color:"var(--text3)",marginBottom:3}}>{label}</div>
-      <div style={{fontFamily:"DM Mono,monospace",fontSize:13,color: isValid(value) ? "var(--gold2)" : "var(--text3)",fontWeight:500}}>
-        {isValid(value) ? `+${Number(value).toFixed(1)}%` : "—"}
-      </div>
-    </div>
-  );
-
-  const IndexRow = ({ label, data }) => (
-    <div style={{marginBottom:10}}>
-      <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",marginBottom:5}}>
-        <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"1.5px",color:"var(--text3)",fontWeight:500}}>{label}</div>
-        {data?.lastMonth && (
-          <div style={{fontSize:9,color:"var(--text3)",fontStyle:"italic"}}>hasta {data.lastMonth}</div>
-        )}
-      </div>
-      <div style={{display:"flex",gap:5}}>
-        <PctBox label="3 meses" value={data?.m3}/>
-        <PctBox label="6 meses" value={data?.m6}/>
-      </div>
-    </div>
-  );
-
-  return (
-    <div style={{padding:"14px 16px",borderTop:"1px solid var(--border)"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
-        <div style={{fontSize:10,textTransform:"uppercase",letterSpacing:"1.5px",color:"var(--text3)",fontWeight:500}}>Índices AR</div>
-        <button onClick={fetchAll} disabled={loading} title="Actualizar"
-          style={{background:"none",border:"none",cursor:loading?"default":"pointer",color:loading?"var(--text3)":"var(--gold)",fontSize:13,padding:0,lineHeight:1,transition:"color .15s"}}>
-          {loading ? "⏳" : "↺"}
-        </button>
-      </div>
-
-      {loading && (
-        <div style={{fontSize:11,color:"var(--text3)",padding:"4px 0"}}>Buscando índices...</div>
-      )}
-
-      {error && !loading && (
-        <div style={{fontSize:11,color:"var(--text3)",lineHeight:1.5}}>
-          No disponible
-          <div style={{marginTop:6}}>
-            <button onClick={fetchAll}
-              style={{fontSize:10,color:"var(--gold)",background:"var(--gold-dim)",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer"}}>
-              Reintentar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {indices && !loading && (
-        <>
-          <IndexRow label="IPC (INDEC)" data={indices.ipc}/>
-          <IndexRow label="ICL (BCRA)"  data={indices.icl}/>
-          {lastFetch && (
-            <div style={{fontSize:9,color:"var(--text3)",marginTop:2}}>Actualizado {lastFetch}</div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-
-/* ════════════════════════════════════════════════════
    NOTIFICATION BELL
 ════════════════════════════════════════════════════ */
 function NotificationBell({ data }) {
@@ -1701,16 +1603,270 @@ function NotificationBell({ data }) {
   );
 }
 
+
+/* ════════════════════════════════════════════════════
+   CALCULADORA DE ALQUILER
+════════════════════════════════════════════════════ */
+function Calculadora() {
+  const [iclData, setIclData]       = useState([]);
+  const [ipcData, setIpcData]       = useState(null);
+  const [loadingIdx, setLoadingIdx] = useState(true);
+  const [rent, setRent]             = useState("");
+  const [startDate, setStartDate]   = useState("");
+  const [freq, setFreq]             = useState(6);
+  const [indice, setIndice]         = useState("ICL");
+  const [result, setResult]         = useState(null);
+  const [cerr, setCerr]             = useState("");
+
+  function toISO(s) { const [d, m, y] = s.split('/'); return `${y}-${m}-${d}`; }
+  function addMonths(iso, n) {
+    const d = new Date(iso + 'T12:00:00');
+    d.setMonth(d.getMonth() + n);
+    return d.toISOString().slice(0, 10);
+  }
+  function findClosest(data, target) {
+    let res = null;
+    for (const r of data) { if (r.date <= target) res = r; else break; }
+    return res;
+  }
+  function mesNombre(iso) {
+    const [y, m] = iso.split('-');
+    return new Date(y, m - 1).toLocaleString('es-AR', { month: 'long' });
+  }
+  function periodLabel(n) {
+    if (freq === 1)  return `Mes ${n}`;
+    if (freq === 3)  return `Trim. ${n}`;
+    if (freq === 6)  return `Semes. ${n}`;
+    if (freq === 12) return `Año ${n}`;
+    return `Per. ${n}`;
+  }
+
+  useEffect(() => {
+    async function fetchIndices() {
+      setLoadingIdx(true);
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const d3y = new Date(); d3y.setFullYear(d3y.getFullYear() - 3);
+        const desde = d3y.toISOString().slice(0, 10);
+        const [iclRes, ipcRes] = await Promise.all([
+          fetch(`/api/icl?desde=${desde}&hasta=${today}`),
+          fetch('/api/ipc'),
+        ]);
+        const iclJson = await iclRes.json();
+        const ipcJson = await ipcRes.json();
+        setIclData((iclJson.data || [])
+          .map(r => ({ date: toISO(r.fecha), value: parseFloat(r.valor) }))
+          .sort((a, b) => a.date.localeCompare(b.date)));
+        setIpcData(ipcJson.data);
+      } catch {}
+      setLoadingIdx(false);
+    }
+    fetchIndices();
+    const ago = new Date(); ago.setFullYear(ago.getFullYear() - 1);
+    setStartDate(ago.toISOString().slice(0, 10));
+  }, []);
+
+  function calcular() {
+    setCerr(''); setResult(null);
+    const r = parseFloat(rent);
+    if (!r || isNaN(r) || r <= 0) { setCerr('Ingresá un monto válido.'); return; }
+    if (!startDate) { setCerr('Ingresá la fecha de inicio.'); return; }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const rows = [];
+
+    if (indice === 'ICL') {
+      if (!iclData.length) { setCerr('Datos ICL no cargados todavía.'); return; }
+      const iclStart = findClosest(iclData, startDate);
+      if (!iclStart) { setCerr(`Sin datos ICL para ${startDate}`); return; }
+      let n = 0, date = startDate;
+      while (date <= today) {
+        const icl = findClosest(iclData, date);
+        if (!icl) break;
+        const coef = icl.value / iclStart.value;
+        rows.push({ n, date, idxVal: icl.value, aumento: n === 0 ? 0 : (coef - 1) * 100, valor: r * coef });
+        n++; date = addMonths(startDate, n * freq);
+      }
+    } else {
+      if (!ipcData) { setCerr('Datos IPC no cargados todavía.'); return; }
+      const rate = ipcData.indice_ipc / 100;
+      let n = 0, date = startDate;
+      while (date <= today) {
+        const coef = Math.pow(1 + rate, n * freq);
+        rows.push({ n, date, idxVal: ipcData.indice_ipc, aumento: n === 0 ? 0 : (coef - 1) * 100, valor: r * coef });
+        n++; date = addMonths(startDate, n * freq);
+      }
+    }
+
+    if (!rows.length) { setCerr('No hay datos para ese rango.'); return; }
+    setResult(rows);
+  }
+
+  const prev = result && result.length >= 2 ? result[result.length - 2] : result?.[0];
+  const curr = result?.[result.length - 1];
+
+  return (
+    <div className="animate-in">
+      <div className="page-title">Calculadora</div>
+      <div className="page-sub">Actualizá montos de alquiler con ICL o IPC · argly.com.ar</div>
+
+      <div className="grid-2" style={{marginBottom:24}}>
+        <div className="stat-card" style={{borderTop:"2px solid var(--gold)"}}>
+          <div className="stat-label">ICL hoy</div>
+          {loadingIdx ? (
+            <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
+          ) : iclData.length ? (
+            <>
+              <div className="stat-value gold" style={{fontFamily:"DM Mono,monospace"}}>
+                {iclData[iclData.length-1].value.toLocaleString("es-AR",{minimumFractionDigits:2})}
+              </div>
+              <div className="stat-sub">{iclData[iclData.length-1].date}</div>
+            </>
+          ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
+        </div>
+        <div className="stat-card" style={{borderTop:"2px solid var(--blue)"}}>
+          <div className="stat-label">IPC último mes</div>
+          {loadingIdx ? (
+            <div style={{color:"var(--text3)",fontSize:13}}>Cargando...</div>
+          ) : ipcData ? (
+            <>
+              <div className="stat-value blue" style={{fontFamily:"DM Mono,monospace"}}>
+                +{ipcData.indice_ipc.toFixed(1)}%
+              </div>
+              <div className="stat-sub">{ipcData.nombre_mes} {ipcData.anio} · Próximo: {ipcData.fecha_proximo_informe}</div>
+            </>
+          ) : <div style={{color:"var(--text3)",fontSize:13}}>No disponible</div>}
+        </div>
+      </div>
+
+      {!result ? (
+        <div className="card" style={{maxWidth:560}}>
+          <div className="card-title">Parámetros</div>
+
+          <div className="form-group">
+            <label>Valor inicial del alquiler</label>
+            <input type="number" value={rent} onChange={e => setRent(e.target.value)} placeholder="ej: 100000"/>
+          </div>
+
+          <div className="form-group">
+            <label>Fecha de inicio de contrato</label>
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}/>
+          </div>
+
+          <div className="form-group">
+            <label>Cada cuánto se actualiza (meses)</label>
+            <div style={{display:"flex",flexWrap:"wrap",gap:6,marginTop:4}}>
+              {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => (
+                <button key={n} onClick={() => setFreq(n)} style={{
+                  padding:"6px 0", width:38, borderRadius:8, border:"1px solid",
+                  borderColor: freq===n ? "var(--gold)" : "var(--border)",
+                  background: freq===n ? "var(--gold-dim)" : "var(--surface2)",
+                  color: freq===n ? "var(--gold2)" : "var(--text2)",
+                  fontFamily:"DM Mono,monospace", fontSize:13, cursor:"pointer",
+                  fontWeight: freq===n ? 600 : 400, transition:"all .15s",
+                }}>{n}</button>
+              ))}
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>Índice de actualización</label>
+            <div style={{display:"flex",gap:8,marginTop:4}}>
+              {["ICL","IPC"].map(ind => (
+                <button key={ind} onClick={() => setIndice(ind)} style={{
+                  padding:"8px 24px", borderRadius:8, border:"1px solid",
+                  borderColor: indice===ind ? (ind==="ICL" ? "var(--gold)" : "var(--blue)") : "var(--border)",
+                  background: indice===ind ? (ind==="ICL" ? "var(--gold-dim)" : "var(--blue-dim)") : "var(--surface2)",
+                  color: indice===ind ? (ind==="ICL" ? "var(--gold2)" : "var(--blue)") : "var(--text2)",
+                  fontFamily:"DM Mono,monospace", fontSize:14, cursor:"pointer",
+                  fontWeight: indice===ind ? 600 : 400, transition:"all .15s",
+                }}>{ind}</button>
+              ))}
+            </div>
+            <div style={{fontSize:11,color:"var(--text3)",marginTop:6}}>
+              {indice==="ICL" ? "Índice de Contratos de Locación · BCRA via argly.com.ar" : "Índice de Precios al Consumidor · INDEC via argly.com.ar"}
+            </div>
+          </div>
+
+          {cerr && (
+            <div style={{background:"var(--red-dim)",border:"1px solid rgba(224,92,92,.3)",borderRadius:8,padding:"10px 14px",fontSize:13,color:"var(--red)",marginBottom:12}}>
+              {cerr}
+            </div>
+          )}
+
+          <button className="btn btn-gold" style={{width:"100%",justifyContent:"center",padding:"12px",fontSize:14}} onClick={calcular}>
+            Calcular
+          </button>
+        </div>
+      ) : (
+        <div className="animate-in" style={{maxWidth:660}}>
+          <div className="grid-2" style={{marginBottom:16}}>
+            <div className="card" style={{textAlign:"center"}}>
+              <div className="card-title">Hasta</div>
+              <div style={{fontSize:13,color:"var(--text2)",textTransform:"capitalize",marginBottom:4}}>{mesNombre(prev.date)}</div>
+              <div style={{fontFamily:"DM Mono,monospace",fontSize:24}}>{fmt(prev.valor)}</div>
+            </div>
+            <div className="card" style={{textAlign:"center",borderColor:"rgba(201,168,76,.4)"}}>
+              <div className="card-title" style={{color:"var(--gold)"}}>Desde</div>
+              <div style={{fontSize:13,color:"var(--text2)",textTransform:"capitalize",marginBottom:4}}>{mesNombre(curr.date)}</div>
+              <div style={{fontFamily:"DM Serif Display,serif",fontSize:28,color:"var(--gold2)"}}>{fmt(curr.valor)}</div>
+            </div>
+          </div>
+
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",fontSize:12,color:"var(--text2)",marginBottom:16,padding:"10px 14px",background:"var(--surface)",border:"1px solid var(--border)",borderRadius:10}}>
+            <span>💰 {fmt(parseFloat(rent))}</span>
+            <span>📅 {startDate}</span>
+            <span>🕐 {freq} {freq===1?"mes":"meses"}</span>
+            <span>📊 {indice}</span>
+          </div>
+
+          <div className="card" style={{marginBottom:16}}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th>Fecha</th>
+                  <th style={{textAlign:"right"}}>Índice</th>
+                  <th style={{textAlign:"right"}}>Aumento</th>
+                  <th style={{textAlign:"right"}}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.map((r,i) => (
+                  <tr key={i}>
+                    <td>{periodLabel(i+1)}</td>
+                    <td>{r.date}</td>
+                    <td style={{textAlign:"right",fontFamily:"DM Mono,monospace"}}>{r.idxVal.toLocaleString("es-AR",{minimumFractionDigits:2})}</td>
+                    <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color:"var(--green)"}}>
+                      {r.aumento===0?"—":`+${r.aumento.toFixed(2)}%`}
+                    </td>
+                    <td style={{textAlign:"right",fontFamily:"DM Mono,monospace",color:"var(--gold2)"}}>{fmt(r.valor)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <button className="btn btn-outline" onClick={() => { setResult(null); setCerr(""); }}>
+            ← Volver a calcular
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════
    APP ROOT
 ════════════════════════════════════════════════════ */
 const NAV = [
-  { id: "dashboard", label: "Resumen", icon: "◈" },
+  { id: "dashboard",   label: "Resumen",     icon: "◈" },
   { id: "propiedades", label: "Propiedades", icon: "⌂" },
-  { id: "ingresos", label: "Alquileres", icon: "↑" },
-  { id: "gastos", label: "Gastos", icon: "↓" },
-  { id: "negocio", label: "Negocio", icon: "◎" },
-  { id: "destinos", label: "Destinos", icon: "⊕" },
+  { id: "ingresos",    label: "Alquileres",  icon: "↑" },
+  { id: "gastos",      label: "Gastos",      icon: "↓" },
+  { id: "negocio",     label: "Negocio",     icon: "◎" },
+  { id: "destinos",    label: "Destinos",    icon: "⊕" },
+  { id: "calculadora", label: "Calculadora", icon: "%" },
 ];
 
 export default function App() {
@@ -1754,14 +1910,13 @@ export default function App() {
         </div>
         <nav className="nav">
           {NAV.map(n => (
-            <div key={n.id} className={`nav-item ${tab === n.id ? "active" : ""}`} onClick={() => setTab(n.id)}>
+            <div key={n.id} className={`nav-item ${tab===n.id?"active":""}`} onClick={() => setTab(n.id)}>
               <span className="nav-icon">{n.icon}</span>
               {n.label}
-              {n.id === "propiedades" && contractAlerts > 0 && <span className="nav-badge">{contractAlerts}</span>}
+              {n.id==="propiedades" && contractAlerts>0 && <span className="nav-badge">{contractAlerts}</span>}
             </div>
           ))}
         </nav>
-        <SidebarIndices/>
         <div style={{padding:"16px 20px",borderTop:"1px solid var(--border)"}}>
           <div style={{fontSize:11,color:"var(--text3)",marginBottom:8,textTransform:"uppercase",letterSpacing:"1.5px"}}>Período</div>
           <select value={month} onChange={e => setMonth(+e.target.value)} style={{marginBottom:8}}>
@@ -1774,12 +1929,13 @@ export default function App() {
       </div>
 
       <main className="main">
-        {tab === "dashboard" && <Dashboard data={data} month={month} year={year}/>}
-        {tab === "propiedades" && <Propiedades data={data} setData={setData}/>}
-        {tab === "ingresos" && <Ingresos data={data} setData={setData} month={month} year={year}/>}
-        {tab === "gastos" && <Gastos data={data} setData={setData} month={month} year={year}/>}
-        {tab === "negocio" && <Negocio data={data} setData={setData} month={month} year={year}/>}
-        {tab === "destinos" && <Destinos data={data} setData={setData}/>}
+        {tab==="dashboard"   && <Dashboard data={data} month={month} year={year}/>}
+        {tab==="propiedades" && <Propiedades data={data} setData={setData}/>}
+        {tab==="ingresos"    && <Ingresos data={data} setData={setData} month={month} year={year}/>}
+        {tab==="gastos"      && <Gastos data={data} setData={setData} month={month} year={year}/>}
+        {tab==="negocio"     && <Negocio data={data} setData={setData} month={month} year={year}/>}
+        {tab==="destinos"    && <Destinos data={data} setData={setData}/>}
+        {tab==="calculadora" && <Calculadora/>}
       </main>
     </div>
   );
